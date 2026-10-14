@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a new input, output, or behaviour
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Note the scope: this action builds **TrollStore-installable** IPAs. App Store
+        submission, provisioning profiles and paid-certificate signing are deliberately out
+        of scope — see CONTRIBUTING.md for why.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do that this action cannot do today?
+      description: A concrete situation, not a general wish.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed input / output / behaviour
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you are doing instead right now
+    validations:
+      required: false

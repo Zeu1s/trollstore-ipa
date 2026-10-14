@@ -5,6 +5,7 @@ permanently. No Apple Developer account, no certificates, no provisioning profil
 Mac on your desk.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Lint](https://github.com/Zeu1s/trollstore-ipa/actions/workflows/lint.yml/badge.svg)](https://github.com/Zeu1s/trollstore-ipa/actions/workflows/lint.yml)
 
 ## Why this exists
 
@@ -101,6 +102,18 @@ Plain `TrollStore` installs work with **no** entitlements, which is the default 
 platform-reserved entitlements, and adding them is the most common reason an otherwise valid
 IPA fails to install.
 
+## Copy-paste example
+
+[`examples/build-ipa.yml`](examples/build-ipa.yml) is a complete workflow you can drop into your
+own repository and run from the Actions tab.
+
+## Proven against a real app
+
+This action is the build path for [Zeu1s/ns-gui-1.0.7-trollstore](https://github.com/Zeu1s/ns-gui-1.0.7-trollstore),
+a UIKit iOS app — see
+[`trollstore.yml`](https://github.com/Zeu1s/ns-gui-1.0.7-trollstore/blob/main/.github/workflows/trollstore.yml).
+It is not only documented, it is consumed.
+
 ## Requirements and limits
 
 - A **macOS** runner (`macos-14`, `macos-15`, …). iOS builds cannot run on Linux or Windows.
@@ -109,6 +122,12 @@ IPA fails to install.
   control, other sideloading paths — it will not install through the normal App Store
   pipeline, and it is not a substitute for a signed distribution build.
 - iOS 15+ device support depends entirely on TrollStore's own supported firmwares.
+
+## Versioning
+
+Pin to the major tag: `uses: Zeu1s/trollstore-ipa@v1`. Releases are tag-driven and `@v1` only
+moves for backwards-compatible changes — see
+[CONTRIBUTING.md](CONTRIBUTING.md#releases-and-versioning) for the cut procedure.
 
 ## License
 

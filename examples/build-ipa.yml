@@ -1,0 +1,43 @@
+# Copy this file into your own repository at
+#   .github/workflows/build-ipa.yml
+# and adjust project / scheme / names. It will not run from this folder.
+
+name: Release IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "MARKETING_VERSION"
+        default: "1.0.0"
+        required: false
+      build_number:
+        description: "CURRENT_PROJECT_VERSION (digits only)"
+        default: "1"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build TrollStore-installable IPA
+        id: build
+        uses: Zeu1s/trollstore-ipa@v1
+        with:
+          project: MyApp.xcodeproj
+          scheme: MyApp
+          version: ${{ inputs.version }}
+          build-number: ${{ inputs.build_number }}
+          ipa-name: MyApp-${{ inputs.version }}-trollstore.ipa
+          artifact-name: myapp-ipa
+
+      # Optional: attach the IPA to a tag you pushed instead of leaving it as a run artifact.
+      # - uses: softprops/action-gh-release@v2
+      #   if: startsWith(github.ref, 'refs/tags/')
+      #   with:
+      #     files: ${{ steps.build.outputs.ipa-path }}
