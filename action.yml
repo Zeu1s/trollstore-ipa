@@ -1,0 +1,219 @@
+name: "TrollStore IPA"
+description: "Build an iOS app in GitHub Actions and package it as an unsigned, ldid-signed IPA that TrollStore can install. No Apple Developer account, no local Mac."
+author: "Zeu1s"
+
+inputs:
+  project:
+    description: "Path to the .xcodeproj. Mutually exclusive with `workspace`."
+    required: false
+    default: ""
+  workspace:
+    description: "Path to the .xcworkspace, if the project uses CocoaPods or another workspace."
+    required: false
+    default: ""
+  scheme:
+    description: "Xcode scheme to archive."
+    required: true
+  configuration:
+    description: "Build configuration."
+    required: false
+    default: "Release"
+  sdk:
+    description: "Target SDK."
+    required: false
+    default: "iphoneos"
+  xcode-version:
+    description: "Value passed to maxim-lobanov/setup-xcode."
+    required: false
+    default: "latest-stable"
+  version:
+    description: "MARKETING_VERSION. Leave empty to use the value in the project."
+    required: false
+    default: ""
+  build-number:
+    description: "CURRENT_PROJECT_VERSION. Must be digits. Leave empty to use the project value."
+    required: false
+    default: ""
+  entitlements:
+    description: "Path to an entitlements plist. Empty signs with no entitlements, which is what a plain TrollStore install expects."
+    required: false
+    default: ""
+  ipa-name:
+    description: "File name of the produced IPA."
+    required: false
+    default: "app.ipa"
+  artifact-name:
+    description: "Name of the uploaded artifact. Set to an empty string to skip uploading."
+    required: false
+    default: "trollstore-ipa"
+  extra-xcodebuild-args:
+    description: "Raw extra arguments appended to xcodebuild."
+    required: false
+    default: ""
+
+outputs:
+  ipa-path:
+    description: "Path to the generated IPA inside the workspace."
+    value: ${{ steps.package.outputs.ipa-path }}
+  app-path:
+    description: "Path to the built .app bundle before packaging."
+    value: ${{ steps.locate.outputs.app-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve Xcode version
+      id: xcode
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.xcode-version }}" ]; then
+          echo "use=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "use=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Select Xcode
+      if: steps.xcode.outputs.use == 'true'
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: ${{ inputs.xcode-version }}
+
+    - name: Install ldid
+      shell: bash
+      run: |
+        if ! command -v ldid >/dev/null 2>&1; then
+          brew install ldid
+        fi
+        ldid --version || true
+
+    - name: Validate inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -z "${{ inputs.project }}" ] && [ -z "${{ inputs.workspace }}" ]; then
+          echo "::error::Provide either 'project' or 'workspace'."
+          exit 1
+        fi
+        if [ -n "${{ inputs.project }}" ] && [ -n "${{ inputs.workspace }}" ]; then
+          echo "::error::'project' and 'workspace' are mutually exclusive."
+          exit 1
+        fi
+        bn="${{ inputs.build-number }}"
+        if [ -n "$bn" ] && ! printf '%s' "$bn" | grep -Eq '^[0-9]+$'; then
+          echo "::error::build-number must contain digits only, got: $bn"
+          exit 1
+        fi
+
+    - name: Resolve Swift package dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${{ inputs.project }}" ]; then
+          xcodebuild -resolvePackageDependencies \
+            -project "${{ inputs.project }}" \
+            -scheme "${{ inputs.scheme }}"
+        else
+          xcodebuild -resolvePackageDependencies \
+            -workspace "${{ inputs.workspace }}" \
+            -scheme "${{ inputs.scheme }}"
+        fi
+
+    - name: Archive without code signing
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        WORKSPACE: ${{ inputs.workspace }}
+        SCHEME: ${{ inputs.scheme }}
+        CONFIGURATION: ${{ inputs.configuration }}
+        SDK: ${{ inputs.sdk }}
+        VERSION: ${{ inputs.version }}
+        BUILD_NUMBER: ${{ inputs.build-number }}
+        EXTRA_ARGS: ${{ inputs.extra-xcodebuild-args }}
+      run: |
+        set -euo pipefail
+        args=()
+        if [ -n "$PROJECT" ]; then args+=(-project "$PROJECT"); else args+=(-workspace "$WORKSPACE"); fi
+        args+=(-scheme "$SCHEME")
+        args+=(-configuration "$CONFIGURATION")
+        args+=(-sdk "$SDK")
+        args+=(-destination "generic/platform=iOS")
+        args+=(-archivePath "$RUNNER_TEMP/trollstore.xcarchive")
+        [ -n "$VERSION" ] && args+=(MARKETING_VERSION="$VERSION")
+        [ -n "$BUILD_NUMBER" ] && args+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER")
+
+        # TrollStore installs ad-hoc signed builds, so every Apple signing step has to be
+        # switched off or xcodebuild fails looking for a certificate that does not exist.
+        args+=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="")
+        args+=(clean archive)
+
+        if [ -n "$EXTRA_ARGS" ]; then
+          # shellcheck disable=SC2206
+          extra=($EXTRA_ARGS)
+          args+=("${extra[@]}")
+        fi
+
+        xcodebuild "${args[@]}"
+
+    - name: Locate the built app
+      id: locate
+      shell: bash
+      run: |
+        set -euo pipefail
+        app=$(find "$RUNNER_TEMP/trollstore.xcarchive/Products/Applications" -maxdepth 1 -name '*.app' | head -n 1)
+        if [ -z "$app" ]; then
+          echo "::error::No .app found in the archive. Check that the scheme builds an application target."
+          exit 1
+        fi
+        echo "app-path=$app" >> "$GITHUB_OUTPUT"
+        echo "Built app: $app"
+
+    - name: Sign with ldid and package the IPA
+      id: package
+      shell: bash
+      env:
+        APP_PATH: ${{ steps.locate.outputs.app-path }}
+        ENTITLEMENTS: ${{ inputs.entitlements }}
+        IPA_NAME: ${{ inputs.ipa-name }}
+      run: |
+        set -euo pipefail
+        rm -rf "$GITHUB_WORKSPACE/build-ipa"
+        mkdir -p "$GITHUB_WORKSPACE/build-ipa/Payload"
+        cp -R "$APP_PATH" "$GITHUB_WORKSPACE/build-ipa/Payload/"
+
+        bundle_dir="$GITHUB_WORKSPACE/build-ipa/Payload/$(basename "$APP_PATH")"
+        # Read the executable name instead of assuming it matches the bundle name.
+        main_binary="$bundle_dir/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle_dir/Info.plist")"
+
+        sign() {
+          if [ -n "$ENTITLEMENTS" ]; then
+            ldid -S"$ENTITLEMENTS" "$1"
+          else
+            ldid -S "$1"
+          fi
+        }
+
+        # Nested Mach-O files must be signed before the outer bundle, otherwise the
+        # main signature is computed over bytes that are about to change.
+        while IFS= read -r -d '' candidate; do
+          [ "$candidate" = "$main_binary" ] && continue
+          if file "$candidate" | grep -q 'Mach-O'; then
+            sign "$candidate"
+          fi
+        done < <(find "$bundle_dir" -type f -perm -111 -print0)
+
+        sign "$main_binary"
+
+        ipa_path="$GITHUB_WORKSPACE/build-ipa/$IPA_NAME"
+        (cd "$GITHUB_WORKSPACE/build-ipa" && zip -qry "$IPA_NAME" Payload)
+        unzip -t "$ipa_path" > /dev/null
+
+        echo "ipa-path=build-ipa/$IPA_NAME" >> "$GITHUB_OUTPUT"
+        echo "Packaged: $ipa_path ($(du -h "$ipa_path" | cut -f1))"
+
+    - name: Upload artifact
+      if: inputs.artifact-name != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.package.outputs.ipa-path }}
+        if-no-files-found: error
